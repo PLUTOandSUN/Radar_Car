@@ -19,6 +19,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "cmsis_os.h"
+#include "pid.h"
+#include "encoder.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -194,7 +196,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  Encoder_Init();  // 初始化编码器
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -658,6 +660,9 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0|GPIO_PIN_3, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin : B1_Pin */
@@ -665,6 +670,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PC0 PC3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LD2_Pin */
   GPIO_InitStruct.Pin = LD2_Pin;
@@ -763,18 +775,41 @@ void odomTask(void *argument)
 /* USER CODE END Header_motorCtrlTask */
 void motorCtrlTask(void *argument)
 {
-  /* USER CODE BEGIN motorCtrlTask */
-  // 启动PWM输出
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-  // 设置慢速运动，占空比10%（Period=999时）
-  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 100); // 左电机
-  __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 100); // 右电机
-  for(;;)
-  {
-    osDelay(1000);
-  }
-  /* USER CODE END motorCtrlTask */
+    // PID结构体定义与初始化
+    PID_TypeDef pid_left, pid_right;
+    PID_Init(&pid_left, 1.0f, 0.01f, 0.1f);   // 参数可根据实际调整
+    PID_Init(&pid_right, 1.0f, 0.01f, 0.1f);
+    pid_left.setpoint = 50;   // 目标速度(RPM)
+    pid_right.setpoint = 50;
+
+    // 启动PWM输出
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+
+    for(;;)
+    {
+        // 更新编码器速度
+        Update_Motor_Speed();
+
+        // 获取当前电机速度
+        float speed_left = GetMotorSpeed(LEFT);
+        float speed_right = GetMotorSpeed(RIGHT);
+
+        // PID计算
+        float pwm_left = PID_Calc(&pid_left, speed_left);
+        float pwm_right = PID_Calc(&pid_right, speed_right);
+
+        // 限幅
+        if(pwm_left < 0) pwm_left = 0;
+        if(pwm_left > 999) pwm_left = 999;
+        if(pwm_right < 0) pwm_right = 0;
+        if(pwm_right > 999) pwm_right = 999;
+
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, (uint16_t)pwm_left);
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, (uint16_t)pwm_right);
+
+        osDelay(10); // 10ms周期
+    }
 }
 
 /* USER CODE BEGIN Header_commTask */
