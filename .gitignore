@@ -1,0 +1,8 @@
+build
+mx.scratch
+!.settings
+.settings
+.vscode
+.idea
+*.clangd
+*.mxproject

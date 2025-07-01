@@ -50,6 +50,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     Core/Src/encoder.c
     Core/Src/pid.c
+    Core/Src/rplidar.c
+    Core/Src/comm_protocol.c
 )
 
 # Add include paths

@@ -21,6 +21,8 @@
 #include "cmsis_os.h"
 #include "pid.h"
 #include "encoder.h"
+#include "comm_protocol.h"
+#include "rplidar.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -117,6 +119,16 @@ osMessageQueueId_t cmdQueueHandle;
 const osMessageQueueAttr_t cmdQueue_attributes = {
   .name = "cmdQueue"
 };
+/* Definitions for btCommQueue */
+osMessageQueueId_t btCommQueueHandle;
+const osMessageQueueAttr_t btCommQueue_attributes = {
+  .name = "btCommQueue"
+};
+/* Definitions for lidarCommQueue */
+osMessageQueueId_t lidarCommQueueHandle;
+const osMessageQueueAttr_t lidarCommQueue_attributes = {
+  .name = "lidarCommQueue"
+};
 /* Definitions for SPI_Mutex */
 osMutexId_t SPI_MutexHandle;
 const osMutexAttr_t SPI_Mutex_attributes = {
@@ -197,6 +209,19 @@ int main(void)
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   Encoder_Init();  // 初始化编码器
+  
+  // 初始化雷达控制GPIO (PC0用于电机控制)
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  
+  // 默认停止雷达电机
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, GPIO_PIN_RESET);
+  
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -231,7 +256,13 @@ int main(void)
   odomQueueHandle = osMessageQueueNew (10, sizeof(uint16_t), &odomQueue_attributes);
 
   /* creation of cmdQueue */
-  cmdQueueHandle = osMessageQueueNew (5, sizeof(uint16_t), &cmdQueue_attributes);
+  cmdQueueHandle = osMessageQueueNew (5, sizeof(MotorCtrlData_t), &cmdQueue_attributes);
+
+  /* creation of btCommQueue */
+  btCommQueueHandle = osMessageQueueNew (10, sizeof(CommFrame_t), &btCommQueue_attributes);
+
+  /* creation of lidarCommQueue */
+  lidarCommQueueHandle = osMessageQueueNew (5, sizeof(CommFrame_t), &lidarCommQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -704,6 +735,7 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
+  (void)argument; // 避免未使用参数警告
   /* Infinite loop */
   for(;;)
   {
@@ -722,6 +754,7 @@ void StartDefaultTask(void *argument)
 void imuTask(void *argument)
 {
   /* USER CODE BEGIN imuTask */
+  (void)argument; // 避免未使用参数警告
   /* Infinite loop */
   for(;;)
   {
@@ -740,10 +773,30 @@ void imuTask(void *argument)
 void lidarTask(void *argument)
 {
   /* USER CODE BEGIN lidarTask */
+  (void)argument; // 避免未使用参数警告
+  
+  // 初始化雷达
+  RPLidar_Init();
+  
+  // 等待初始化完成
+  osDelay(2000);
+  
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    // 解析雷达应答数据
+    if (RPLidar_ParseResponse()) {
+      // 数据已处理并发送到上位机
+    }
+    
+    // 定期发送雷达状态 (每5秒)
+    // static uint32_t status_timer = 0;
+    // if (HAL_GetTick() - status_timer >= 5000) {
+    //   RPLidar_SendStatusToPC();
+    //   status_timer = HAL_GetTick();
+    // }
+    
+    osDelay(10); // 10ms循环周期
   }
   /* USER CODE END lidarTask */
 }
@@ -758,6 +811,7 @@ void lidarTask(void *argument)
 void odomTask(void *argument)
 {
   /* USER CODE BEGIN odomTask */
+  (void)argument; // 避免未使用参数警告
   /* Infinite loop */
   for(;;)
   {
@@ -775,19 +829,29 @@ void odomTask(void *argument)
 /* USER CODE END Header_motorCtrlTask */
 void motorCtrlTask(void *argument)
 {
+    (void)argument; // 避免未使用参数警告
     // PID结构体定义与初始化
     PID_TypeDef pid_left, pid_right;
     PID_Init(&pid_left, 1.0f, 0.01f, 0.1f);   // 参数可根据实际调整
     PID_Init(&pid_right, 1.0f, 0.01f, 0.1f);
-    pid_left.setpoint = 50;   // 目标速度(RPM)
-    pid_right.setpoint = 50;
+    pid_left.setpoint = 0;   // 初始目标速度
+    pid_right.setpoint = 0;
 
     // 启动PWM输出
     HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
     HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
 
+    MotorCtrlData_t motor_cmd;
+
     for(;;)
     {
+        // 检查是否有新的电机控制命令
+        if (osMessageQueueGet(cmdQueueHandle, &motor_cmd, NULL, 0) == osOK) {
+            // 更新目标速度
+            pid_left.setpoint = motor_cmd.left_speed;
+            pid_right.setpoint = motor_cmd.right_speed;
+        }
+
         // 更新编码器速度
         Update_Motor_Speed();
 
@@ -822,10 +886,40 @@ void motorCtrlTask(void *argument)
 void commTask(void *argument)
 {
   /* USER CODE BEGIN commTask */
+  (void)argument; // 避免未使用参数警告
+  CommFrame_t rx_frame;
+  uint32_t heartbeat_timer = 0;
+  
+  // 初始化通信协议
+  Comm_Init();
+  
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    // 处理蓝牙接收到的帧
+    if (BT_ParseFrame(&rx_frame)) {
+      Comm_HandleCommand(&rx_frame, 0); // 0表示来自蓝牙
+    }
+    
+    // 处理雷达接收到的帧 (如果有雷达通信协议帧)
+    if (Lidar_ParseFrame(&rx_frame)) {
+      Comm_HandleCommand(&rx_frame, 1); // 1表示来自雷达
+    }
+    
+    // 每1秒发送一次心跳包
+    if (HAL_GetTick() - heartbeat_timer >= 1000) {
+      Comm_SendHeartbeat();
+      heartbeat_timer = HAL_GetTick();
+    }
+    
+    // // 定期发送状态信息 (每100ms)
+    // static uint32_t status_timer = 0;
+    // if (HAL_GetTick() - status_timer >= 100) {
+    //   Comm_SendMotorStatus();
+    //   status_timer = HAL_GetTick();
+    // }
+    
+    osDelay(10); // 10ms循环周期
   }
   /* USER CODE END commTask */
 }
