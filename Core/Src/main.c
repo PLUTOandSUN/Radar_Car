@@ -790,11 +790,11 @@ void lidarTask(void *argument)
     }
     
     // 定期发送雷达状态 (每5秒)
-    static uint32_t status_timer = 0;
-    if (HAL_GetTick() - status_timer >= 5000) {
-      RPLidar_SendStatusToPC();
-      status_timer = HAL_GetTick();
-    }
+    // static uint32_t status_timer = 0;
+    // if (HAL_GetTick() - status_timer >= 5000) {
+    //   RPLidar_SendStatusToPC();
+    //   status_timer = HAL_GetTick();
+    // }
     
     osDelay(10); // 10ms循环周期
   }
@@ -912,12 +912,12 @@ void commTask(void *argument)
       heartbeat_timer = HAL_GetTick();
     }
     
-    // 定期发送状态信息 (每100ms)
-    static uint32_t status_timer = 0;
-    if (HAL_GetTick() - status_timer >= 100) {
-      Comm_SendMotorStatus();
-      status_timer = HAL_GetTick();
-    }
+    // // 定期发送状态信息 (每100ms)
+    // static uint32_t status_timer = 0;
+    // if (HAL_GetTick() - status_timer >= 100) {
+    //   Comm_SendMotorStatus();
+    //   status_timer = HAL_GetTick();
+    // }
     
     osDelay(10); // 10ms循环周期
   }

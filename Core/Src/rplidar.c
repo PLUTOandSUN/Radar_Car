@@ -9,8 +9,24 @@
 
 #include "rplidar.h"
 #include "comm_protocol.h"
-#include <string.h>
-#include <math.h>
+
+/* 简单的内存操作函数实现 */
+static void* simple_memset(void* ptr, int value, size_t num) {
+    unsigned char* p = (unsigned char*)ptr;
+    for(size_t i = 0; i < num; i++) {
+        p[i] = (unsigned char)value;
+    }
+    return ptr;
+}
+
+static void* simple_memcpy(void* dest, const void* src, size_t num) {
+    unsigned char* d = (unsigned char*)dest;
+    const unsigned char* s = (const unsigned char*)src;
+    for(size_t i = 0; i < num; i++) {
+        d[i] = s[i];
+    }
+    return dest;
+}
 
 /* 外部变量引用 */
 extern UART_HandleTypeDef huart1;  // 雷达串口
@@ -30,11 +46,11 @@ static uint16_t current_point_count = 0;
 void RPLidar_Init(void)
 {
     // 初始化接收缓冲区
-    memset(&rplidar_rx_buf, 0, sizeof(rplidar_rx_buf));
+    simple_memset(&rplidar_rx_buf, 0, sizeof(rplidar_rx_buf));
     rplidar_rx_buf.state = RPLIDAR_STATE_IDLE;
     
     // 初始化雷达状态
-    memset(&rplidar_status, 0, sizeof(rplidar_status));
+    simple_memset(&rplidar_status, 0, sizeof(rplidar_status));
     
     // 停止雷达
     RPLidar_Reset();
@@ -125,7 +141,7 @@ void RPLidar_SendCommand(uint8_t cmd, uint8_t *payload, uint8_t payload_size)
     packet.size = payload_size;
     
     if (payload_size > 0 && payload != NULL) {
-        memcpy(packet.data, payload, payload_size);
+        simple_memcpy(packet.data, payload, payload_size);
         packet.cmd_flag |= RPLIDAR_CMDFLAG_HAS_PAYLOAD;
     }
     
@@ -194,7 +210,7 @@ void RPLidar_ProcessRxByte(uint8_t byte)
                 if (header->sync_byte1 == RPLIDAR_ANS_SYNC_BYTE1 && 
                     header->sync_byte2 == RPLIDAR_ANS_SYNC_BYTE2) {
                     // 找到有效头部
-                    memcpy(&rplidar_rx_buf.current_header, header, sizeof(rplidar_ans_header_t));
+                    simple_memcpy(&rplidar_rx_buf.current_header, header, sizeof(rplidar_ans_header_t));
                     rplidar_rx_buf.expected_size = (rplidar_rx_buf.current_header.size_q30_subtype >> 2) & 0x3FFFFFFF;
                     rplidar_rx_buf.state = RPLIDAR_STATE_WAIT_DATA;
                     rplidar_rx_buf.read_index = sizeof(rplidar_ans_header_t);
@@ -230,7 +246,7 @@ uint8_t RPLidar_ParseResponse(void)
         case RPLIDAR_ANS_TYPE_DEVINFO:
             // 设备信息应答
             if (rplidar_rx_buf.expected_size >= sizeof(rplidar_response_device_info_t)) {
-                memcpy(&rplidar_status.device_info, data, sizeof(rplidar_response_device_info_t));
+                simple_memcpy(&rplidar_status.device_info, data, sizeof(rplidar_response_device_info_t));
                 result = 1;
             }
             break;
